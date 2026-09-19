@@ -1,5 +1,9 @@
 #![forbid(unsafe_code)]
 
+#[cfg(test)]
+#[path = "../../firmware/src/report.rs"]
+mod report_tests;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::error::Error;

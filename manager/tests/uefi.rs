@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use serde_json::{Value, json};
-use std::fs;
+use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
@@ -50,12 +50,52 @@ fn run_case(
     expected: &str,
     gpus: u8,
     capture: Option<&Path>,
+    expect_report: bool,
 ) {
     let code = std::env::var("OVMF_CODE").unwrap_or("/usr/share/edk2/x64/OVMF_CODE.4m.fd".into());
     let template =
         std::env::var("OVMF_VARS").unwrap_or("/usr/share/edk2/x64/OVMF_VARS.4m.fd".into());
     let vars = root.join(format!("{label}.fd"));
     fs::copy(template, &vars).unwrap();
+    // A real FAT image tests file growth/truncation; vvfat's host-directory
+    // mapping does not reliably reflect a deleted/recreated growing log file.
+    let disk = root.join(format!("{label}.img"));
+    File::create(&disk)
+        .unwrap()
+        .set_len(64 * 1024 * 1024)
+        .unwrap();
+    assert!(
+        Command::new("mformat")
+            .arg("-i")
+            .arg(&disk)
+            .args(["-F", "::"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        Command::new("mcopy")
+            .arg("-i")
+            .arg(&disk)
+            .arg("-s")
+            .arg(esp.join("EFI"))
+            .arg("::")
+            .status()
+            .unwrap()
+            .success()
+    );
+    if esp.join("limine.conf").exists() {
+        assert!(
+            Command::new("mcopy")
+                .arg("-i")
+                .arg(&disk)
+                .arg(esp.join("limine.conf"))
+                .arg("::/limine.conf")
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
     let log = root.join(format!("{label}.log"));
     let qmp = root.join("qmp");
     let _ = fs::remove_file(&qmp);
@@ -70,10 +110,7 @@ fn run_case(
             "-drive",
             &format!("if=pflash,format=raw,file={}", vars.display()),
         ])
-        .args([
-            "-drive",
-            &format!("format=raw,file=fat:rw:{}", esp.display()),
-        ])
+        .args(["-drive", &format!("format=raw,file={}", disk.display())])
         .args([
             "-display",
             "none",
@@ -112,6 +149,52 @@ fn run_case(
     while Instant::now() < deadline && vm.0.try_wait().unwrap().is_none() {
         text = fs::read_to_string(&log).unwrap_or_default();
         if text.contains(expected) {
+            if expect_report {
+                assert!(text.contains("boot report saved"), "{text}");
+                let output = Command::new("mtype")
+                    .arg("-i")
+                    .arg(&disk)
+                    .arg("::/EFI/liminescreen/lastboot.txt")
+                    .output()
+                    .unwrap();
+                assert!(
+                    output.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                let report = String::from_utf8(output.stdout).unwrap();
+                assert!(
+                    report.starts_with(&format!(
+                        "liminescreen {} boot report\n",
+                        env!("CARGO_PKG_VERSION")
+                    )),
+                    "{report}"
+                );
+                assert!(report.len() <= 16 * 1024);
+                assert!(
+                    report.contains("next: chainload the installed official limine"),
+                    "{report}"
+                );
+                if gpus == 0 {
+                    assert!(
+                        report.contains("no firmware graphics interfaces"),
+                        "{report}"
+                    );
+                    assert!(
+                        !report.contains("display: vendor="),
+                        "stale report tail: {report}"
+                    );
+                } else {
+                    assert!(report.contains("display: vendor="), "{report}");
+                    assert!(report.contains("firmware driver bound:"), "{report}");
+                    assert!(report.contains("pci path node:"), "{report}");
+                }
+                // Carry the previous report into the next virtual boot so log
+                // growth and replacement by a shorter report are both exercised.
+                fs::write(esp.join("EFI/liminescreen/lastboot.txt"), &report).unwrap();
+            } else {
+                assert!(text.contains("boot report could not be saved"), "{text}");
+            }
             if gpus == 2 {
                 assert!(
                     text.lines().any(|line| {
@@ -163,8 +246,10 @@ fn chainload_updates_and_failures() {
     let esp = root.join("esp");
     let boot = esp.join("EFI/BOOT");
     let limine = esp.join("EFI/limine");
+    let addon = esp.join("EFI/liminescreen");
     fs::create_dir_all(&boot).unwrap();
     fs::create_dir_all(&limine).unwrap();
+    fs::create_dir_all(&addon).unwrap();
     let artifacts = root.join("target/x86_64-unknown-uefi/release");
     let build = |binary: &str, marker: &str| {
         assert!(
@@ -206,6 +291,7 @@ fn chainload_updates_and_failures() {
             &format!("LIMINESCREEN_TARGET_{marker}"),
             gpus,
             None,
+            true,
         );
     }
     run_case(
@@ -215,7 +301,20 @@ fn chainload_updates_and_failures() {
         "LIMINESCREEN_TARGET_UPDATED",
         0,
         None,
+        true,
     );
+    fs::remove_file(addon.join("lastboot.txt")).unwrap();
+    fs::create_dir(addon.join("lastboot.txt")).unwrap();
+    run_case(
+        root,
+        &esp,
+        "report-unwritable",
+        "LIMINESCREEN_TARGET_UPDATED",
+        1,
+        None,
+        false,
+    );
+    fs::remove_dir(addon.join("lastboot.txt")).unwrap();
     fs::remove_file(limine.join("limine_x64.efi")).unwrap();
     run_case(
         root,
@@ -224,6 +323,7 @@ fn chainload_updates_and_failures() {
         "cannot start installed Limine",
         1,
         None,
+        true,
     );
     if let Ok(official) = std::env::var("LIMINE_EFI") {
         fs::copy(official, limine.join("limine_x64.efi")).unwrap();
@@ -236,6 +336,7 @@ fn chainload_updates_and_failures() {
             "starting installed Limine",
             1,
             Some(&output),
+            true,
         );
         println!("inspect {}", output.display());
     }

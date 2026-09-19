@@ -5,6 +5,7 @@
 extern crate alloc;
 
 mod firmware;
+mod report;
 
 use alloc::vec::Vec;
 use uefi::boot::{self, LoadImageSource};
@@ -55,7 +56,22 @@ fn main() -> Status {
         "liminescreen {}: preparing firmware displays",
         env!("CARGO_PKG_VERSION")
     );
-    firmware::activate_displays();
+    let mut report = report::Report::new();
+    report.line(format_args!(
+        "liminescreen {} boot report",
+        env!("CARGO_PKG_VERSION")
+    ));
+    report.line(format_args!(
+        "firmware time: {:?}",
+        uefi::runtime::get_time()
+    ));
+    firmware::activate_displays(&mut report);
+    report.line(format_args!(
+        "next: chainload the installed official limine"
+    ));
+    if let Err(status) = firmware::save_report(&report.finish()) {
+        log::warn!("liminescreen: boot report could not be saved: {status:?}");
+    }
     match chainload() {
         Ok(()) => Status::SUCCESS,
         Err(status) => {

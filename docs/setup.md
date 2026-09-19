@@ -9,7 +9,7 @@ the rust toolchain file requests the uefi target. build dependencies are locked.
 
 on omarchy, install missing tools with the official package command. use a
 rustup installation of rust so the uefi target is available. vm tests also need
-`qemu-system-x86` and `edk2-ovmf`.
+`qemu-system-x86`, `edk2-ovmf`, and `mtools`.
 
 ## installation
 
@@ -25,6 +25,7 @@ setup adds these files:
 | `/var/lib/liminescreen/state.json` | private installation state |
 | `/var/lib/liminescreen/backup-*` | firmware records and previous addon versions |
 | `/etc/pacman.d/hooks/99-liminescreen.hook` | checks after limine or omarchy updates |
+| `/boot/EFI/liminescreen/lastboot.txt` | bounded report from the most recent addon boot |
 
 the installer creates a firmware entry called `liminescreen`. it keeps the
 normal boot order and schedules only one trial using `BootNext`. an existing
@@ -46,6 +47,18 @@ package updates restore this ordering only while the addon is enabled. use
 `make disable` if you want a manual firmware preference to remain in charge.
 
 ## normal updates
+
+if the monitor still has no signal, read the latest report after returning to linux:
+
+```sh
+less /boot/EFI/liminescreen/lastboot.txt
+```
+
+the report records the version, firmware time, pci display identifiers, driver
+ownership, graphics child paths, and initialization results. it is replaced on
+each addon boot, up to 16 kib. it is local diagnostic data, not part of the public
+repository. compare its version and time before treating it as the latest trial.
+keep persistent enablement off while physical hdmi remains broken.
 
 each boot loads the current official limine image from the same esp. updating
 limine needs no addon rebuild. the package hook verifies the addon checksum,
