@@ -1,0 +1,29 @@
+[package]
+name = "liminescreen"
+version.workspace = true
+edition = "2024"
+autotests = false
+license = "MIT"
+description = "Initialize firmware displays before launching an unchanged Limine installation"
+repository = "https://github.com/WhiteHades/liminescreen"
+
+[dependencies]
+uefi = { version = "0.40", features = ["alloc", "global_allocator", "panic_handler", "logger"] }
+uefi-raw = "0.16"
+log = "0.4"
+
+[features]
+vm-tests = ["uefi/log-debugcon"]
+
+[[bin]]
+name = "liminescreen"
+path = "src/main.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "boot-probe"
+path = "tests/boot_probe.rs"
+required-features = ["vm-tests"]
+test = false
+bench = false
