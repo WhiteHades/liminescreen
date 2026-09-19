@@ -70,6 +70,7 @@ files are removed after the run. test instrumentation is built in a separate
 temporary target directory and is absent from the production image.
 
 the initial 0.1.0 trial on the development laptop ran successfully as a loader
-but did not produce an hdmi signal. 0.1.1 corrects the skipped bound-controller
-case and records evidence for the next hardware test. neither the policy change
+but did not produce an hdmi signal. the current 0.1.0 development build corrects
+the skipped bound-controller case and records evidence for the next hardware
+test. neither the policy change
 nor passing vm tests establishes that physical hdmi initialization now works.
