@@ -1,9 +1,10 @@
 # how it works
 
-the firmware app connects pci display controllers that have no known graphics
-child, including controllers with a bound driver whose graphics child has not
-been connected. it uses device paths to leave controllers with an existing
-graphics interface alone, and skips ambiguous ownership or paths. it then asks
+the firmware app recursively connects every pci display controller using
+UEFI `ConnectController`. this preserves bound drivers while asking them to
+create any missing children. an existing graphics interface does not prove
+that every output is initialized, and a graphics interface without a device
+path must not prevent another gpu from being connected. it then asks
 graphics interfaces whether they are running. an interface that
 returns `EFI_NOT_STARTED` is started in mode zero. already active graphics modes
 are left alone. display errors do not stop the attempt to load official limine.
@@ -70,7 +71,18 @@ files are removed after the run. test instrumentation is built in a separate
 temporary target directory and is absent from the production image.
 
 the initial 0.1.0 trial on the development laptop ran successfully as a loader
-but did not produce an hdmi signal. the current 0.1.0 development build corrects
-the skipped bound-controller case and records evidence for the next hardware
-test. neither the policy change
-nor passing vm tests establishes that physical hdmi initialization now works.
+but did not produce an hdmi signal. a later report showed that a pathless
+graphics interface caused the helper to skip the nvidia controller, which owns
+the hdmi connector on that machine. the current build removes that skip. vm
+tests verify that every display controller gets a connection attempt and
+chainloading still works. the next physical test still produced no hdmi signal.
+
+the report dated 2026-09-20 09:04:23 records `NOT_FOUND` for the nvidia display
+controller and success for amd. two graphics interfaces were listed: one had
+no device path, and the identifiable one followed the amd pci path. this does
+not establish the identity of the pathless interface or prove that every
+possible nvidia firmware driver is absent. it confirms that this connection
+attempt did not solve hdmi output. no identical retry is scheduled automatically.
+
+UEFI describes recursive connection and starting additional children in the
+[boot services specification](https://uefi.org/specs/UEFI/2.10_A/07_Services_Boot_Services.html#efi-boot-services-connectcontroller).

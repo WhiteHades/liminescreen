@@ -2,7 +2,6 @@
 //! or starting another image. No framebuffer writes, PCI writes, or NVRAM writes.
 
 use crate::report::Report;
-use alloc::vec::Vec;
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
 use uefi::boot::{self, OpenProtocolAttributes, OpenProtocolParams, SearchType};
@@ -103,39 +102,6 @@ fn record_pci_path(handle: Handle, report: &mut Report) {
     }
 }
 
-/// A bound PCI driver does not imply its graphics child has been connected.
-/// Inspect paths first so a retry never targets a controller with a known GOP.
-fn has_graphics_child(controller: Handle) -> Result<bool, Status> {
-    let parent = with_protocol::<DevicePath, _>(controller, |path| {
-        let bytes = path.as_bytes();
-        if bytes.len() <= 4 || bytes.len() > 4096 {
-            return Err(Status::COMPROMISED_DATA);
-        }
-        let prefix = bytes
-            .strip_suffix(&[0x7f, 0xff, 4, 0])
-            .ok_or(Status::COMPROMISED_DATA)?;
-        Ok(Vec::from(prefix))
-    })??;
-    let handles = match boot::locate_handle_buffer(SearchType::ByProtocol(&Gop::GUID)) {
-        Ok(handles) => handles,
-        Err(error) if error.status() == Status::NOT_FOUND => return Ok(false),
-        Err(error) => return Err(error.status()),
-    };
-    let mut unknown = false;
-    for &handle in handles.iter() {
-        match with_protocol::<DevicePath, _>(handle, |path| path.as_bytes().starts_with(&parent)) {
-            Ok(true) => return Ok(true),
-            Ok(false) => {}
-            Err(_) => unknown = true,
-        }
-    }
-    if unknown {
-        Err(Status::UNSUPPORTED)
-    } else {
-        Ok(false)
-    }
-}
-
 fn driver_is_bound(handle: Handle) -> Result<bool, Status> {
     let system = uefi::table::system_table_raw().ok_or(Status::NOT_READY)?;
     // SAFETY: Called only during this application's boot-services lifetime.
@@ -229,27 +195,15 @@ pub fn activate_displays(report: &mut Report) {
                     record_pci_path(handle, report);
                     let bound = driver_is_bound(handle);
                     record(report, format_args!("  firmware driver bound: {bound:?}"));
-                    let graphics = has_graphics_child(handle);
+                    // ConnectController is additive: existing drivers stay bound,
+                    // and recursive connection can discover their remaining children.
+                    // A pathless GOP or an existing output must not hide another GPU
+                    // or a second output on the same controller.
+                    let result = boot::connect_controller(handle, &[], None, true);
                     record(
                         report,
-                        format_args!("  existing graphics child: {graphics:?}"),
+                        format_args!("  connect display controller: {result:?}"),
                     );
-                    if bound.is_ok() && graphics == Ok(false) {
-                        // Recursive ConnectController can start missing children of a
-                        // managed controller. It does not call DisconnectController.
-                        let result = boot::connect_controller(handle, &[], None, true);
-                        record(
-                            report,
-                            format_args!("  connect missing display interface: {result:?}"),
-                        );
-                    } else {
-                        record(
-                            report,
-                            format_args!(
-                                "  connection skipped: graphics already present or unknown ownership/path"
-                            ),
-                        );
-                    }
                 }
                 Err(status) => record(report, format_args!("pci class read failed: {status:?}")),
                 Ok(false) => {}

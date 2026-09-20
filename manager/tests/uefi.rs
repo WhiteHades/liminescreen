@@ -188,6 +188,11 @@ fn run_case(
                     assert!(report.contains("display: vendor="), "{report}");
                     assert!(report.contains("firmware driver bound:"), "{report}");
                     assert!(report.contains("pci path node:"), "{report}");
+                    assert_eq!(
+                        report.matches("connect display controller:").count(),
+                        report.matches("display: vendor=").count(),
+                        "every display must be connected even when graphics already exist: {report}"
+                    );
                 }
                 // Carry the previous report into the next virtual boot so log
                 // growth and replacement by a shorter report are both exercised.

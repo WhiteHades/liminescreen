@@ -71,9 +71,9 @@ your firmware must provide a graphics driver for the external screen before
 linux starts. liminescreen can start an available driver. it cannot add one
 that your firmware does not have.
 
-the first laptop test reached limine, but the external monitor still had no
-signal. the current build tries a startup step that the first build skipped.
-it also saves a boot report. this is another trial, not a verified hdmi fix.
+the external monitor still receives no boot signal on the test laptop. the
+latest report confirms a connection attempt for the hdmi gpu, but firmware
+returned a not found result. this is not a verified hdmi fix.
 
 the virtual machine checks pass, including loading the official limine menu.
 this project is not an official limine or omarchy component.
